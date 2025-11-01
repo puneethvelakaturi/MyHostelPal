@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, BarChart2, Users, AlertTriangle, Calendar, CalendarDays, CalendarRange } from 'lucide-react';
 import toast from 'react-hot-toast';
-import ReactMarkdown from 'react-markdown';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import api from '../../services/api';
 
@@ -40,67 +39,71 @@ const AdminReports = () => {
     const fetchReports = async () => {
       try {
         setLoading(true);
+        setReportData(null); // Clear old data first
+        
         const [reportsResponse, statsResponse] = await Promise.all([
           api.get(`/reports/${selectedPeriod}`),
           api.get('/reports/users')
         ]);
 
-          // debug logs to inspect response shapes
-          console.debug('reportsResponse.data (type):', typeof reportsResponse.data);
-          console.debug('reportsResponse.data keys:', reportsResponse.data && Object.keys(reportsResponse.data));
-          console.debug('aiAnalysis type preview:', reportsResponse.data && (reportsResponse.data.aiAnalysis ? (typeof reportsResponse.data.aiAnalysis) : 'no-aiAnalysis'));
-
-          // sanitize incoming report data to avoid React elements or unexpected objects being rendered
-          const sanitize = (value, depth = 0) => {
-            try {
-              // Maximum recursion depth
-              if (depth > 5) return String(value);
-              
-              // Handle null/undefined
-              if (value === null || value === undefined) return value;
-              
-              // Handle primitives
-              if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
-              
-              // Handle arrays
-              if (Array.isArray(value)) return value.map(v => sanitize(v, depth + 1));
-              
-              // Handle objects
-              if (typeof value === 'object') {
-                // Handle React elements
-                if (value && value.$$typeof) return 'React Element';
-                
-                // Handle Dates
-                if (value instanceof Date) return value.toISOString();
-                
-                // Handle other objects
-                const out = {};
-                for (const k of Object.keys(value)) {
-                  try {
-                    const sanitized = sanitize(value[k], depth + 1);
-                    // Only include non-null values
-                    if (sanitized !== null && sanitized !== undefined) {
-                      out[k] = sanitized;
-                    }
-                  } catch (err) {
-                    console.error(`Error sanitizing key ${k}:`, err);
-                    out[k] = String(value[k]);
-                  }
+        // Process and validate stats data
+        const stats = {
+          totalUsers: Number(statsResponse.data?.totalUsers || 0),
+          studentCount: Number(statsResponse.data?.studentCount || 0),
+          staffCount: Number(statsResponse.data?.staffCount || 0),
+          adminCount: Number(statsResponse.data?.adminCount || 0)
+        };
+        
+        // Process and validate report data
+        const report = reportsResponse.data ? {
+          aiAnalysis: typeof reportsResponse.data.aiAnalysis === 'string' 
+            ? reportsResponse.data.aiAnalysis.trim() 
+            : 'No analysis available.',
+          totalTickets: Number(reportsResponse.data.totalTickets || 0),
+          criticalIssues: Number(reportsResponse.data.criticalIssues || 0),
+          statusDistribution: Array.isArray(reportsResponse.data.statusDistribution) 
+            ? reportsResponse.data.statusDistribution.map(item => ({
+                _id: String(item._id || ''),
+                count: Number(item.count || 0)
+              }))
+            : [],
+          categoryBreakdown: Array.isArray(reportsResponse.data.categoryBreakdown)
+            ? reportsResponse.data.categoryBreakdown.map(item => ({
+                _id: String(item._id || ''),
+                count: Number(item.count || 0)
+              }))
+            : [],
+          dailyDistribution: Array.isArray(reportsResponse.data.dailyDistribution)
+            ? reportsResponse.data.dailyDistribution.map(item => ({
+                _id: String(item._id || ''),
+                count: Number(item.count || 0)
+              }))
+            : [],
+          weeklyDistribution: Array.isArray(reportsResponse.data.weeklyDistribution)
+            ? reportsResponse.data.weeklyDistribution.map(item => ({
+                _id: String(item._id || ''),
+                count: Number(item.count || 0)
+              }))
+            : [],
+          resolutionMetrics: {
+            avgResolutionTime: Number(reportsResponse.data.resolutionMetrics?.avgResolutionTime || 0),
+            totalResolved: Number(reportsResponse.data.resolutionMetrics?.totalResolved || 0)
+          },
+          tickets: Array.isArray(reportsResponse.data.tickets)
+            ? reportsResponse.data.tickets.map(ticket => ({
+                _id: String(ticket._id || ''),
+                title: String(ticket.title || ''),
+                category: String(ticket.category || ''),
+                status: String(ticket.status || ''),
+                createdBy: {
+                  name: String(ticket.createdBy?.name || ticket.student?.name || 'Unknown')
                 }
-                return out;
-              }
-              
-              // Fallback for any other types
-              return String(value);
-            } catch (error) {
-              console.error('Sanitization error:', error);
-              return String(value);
-            }
-          };
+              }))
+            : []
+        } : null;
 
-          const safeData = sanitize(reportsResponse.data);
-          setReportData(safeData);
-          setUserStats(statsResponse.data);
+        setReportData(report);
+        setUserStats(stats);
       } catch (error) {
         console.error('Error fetching reports:', error);
         toast.error(error.response?.data?.message || 'Failed to fetch reports');
@@ -325,44 +328,43 @@ const AdminReports = () => {
       )}
 
       {/* AI Analysis */}
-      {reportData?.aiAnalysis && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">AI Analysis</h2>
-          <div className="prose max-w-none">
-            <div className="text-gray-600">
-              {(() => {
-                try {
-                  const analysis = reportData.aiAnalysis;
-                  // Handle React elements
-                  if (analysis && analysis.$$typeof) {
-                    return 'Content not available';
-                  }
-                  // Handle strings (including JSON strings)
-                  if (typeof analysis === 'string') {
-                    try {
-                      // Try to parse as JSON first
-                      const parsed = JSON.parse(analysis);
-                      return <pre className="whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>;
-                    } catch {
-                      // If not JSON, render as markdown
-                      return <ReactMarkdown>{analysis}</ReactMarkdown>;
-                    }
-                  }
-                  // Handle objects
-                  if (analysis && typeof analysis === 'object') {
-                    return <pre className="whitespace-pre-wrap">{JSON.stringify(analysis, null, 2)}</pre>;
-                  }
-                  // Fallback
-                  return String(analysis || 'No analysis available');
-                } catch (error) {
-                  console.error('Error rendering analysis:', error);
-                  return 'Error displaying analysis';
-                }
-              })()}
-            </div>
-          </div>
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">AI Analysis</h2>
+        <div className="prose max-w-none text-gray-600">
+          {(() => {
+            try {
+              if (!reportData?.aiAnalysis) {
+                return <div>No analysis available for this period.</div>;
+              }
+
+              const markdownText = String(reportData.aiAnalysis || '').trim();
+              
+              if (!markdownText) {
+                return <div>No analysis content available.</div>;
+              }
+
+              // Create a sanitized version of the markdown content
+              const sanitizedContent = markdownText
+                .replace(/<[^>]*>/g, '') // Remove HTML tags
+                .replace(/\[.*?\]\(.*?\)/g, '') // Remove markdown links
+                .trim();
+
+              return (
+                <div>
+                  {sanitizedContent.split('\n').map((line, index) => (
+                    <p key={index} className="mb-4">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              );
+            } catch (error) {
+              console.error('Error rendering analysis:', error);
+              return <div className="text-red-500">Error displaying analysis content.</div>;
+            }
+          })()}
         </div>
-      )}
+      </div>
     </div>
     </ReportsErrorBoundary>
   );

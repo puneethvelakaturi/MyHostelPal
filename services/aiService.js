@@ -38,9 +38,11 @@ Return a raw JSON object without any markdown formatting or code blocks. Just th
 
 Rules/Guidance:
 - Medical emergencies (ambulance, severe injury, difficulty breathing) -> priority: urgent
+- Medical issues (fever, headache, illness) -> priority: high
 - Safety/security threats -> priority: urgent
 - Major service outages (no water/electricity for many residents) or critical infrastructure failures -> high
 - Minor repairs or cleaning requests -> low/medium depending on impact
+- Any health-related complaints -> minimum priority: high
 
 Title: "${title}"
 Description: "${description}"
@@ -66,6 +68,10 @@ Return the JSON object.`;
 
   async generateReport(tickets, reportType) {
     try {
+      if (!tickets || tickets.length === 0) {
+        return `## ${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report Summary\n\nNo tickets were recorded during this period. This could indicate:\n\n* Smooth operation with no reported issues\n* Possible underutilization of the ticketing system\n* Need to encourage more active system usage\n\n## Recommendations\n\n* Verify that all users are aware of how to submit tickets\n* Consider conducting a system usage survey\n* Monitor for any access issues or technical barriers`;
+      }
+
       const ticketSummary = tickets.map(ticket => ({
         id: ticket._id,
         category: ticket.category,
@@ -128,41 +134,50 @@ Return the JSON object.`;
   }
 
   // Gemini API call method with retries
+  sanitizeMarkdown(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/```[a-z]*\n/g, '') // Remove code block markers
+      .replace(/```/g, '')         // Remove remaining code block markers
+      .replace(/\[\[.*?\]\]/g, '') // Remove wiki-style links
+      .replace(/<[^>]*>/g, '')     // Remove HTML tags
+      .trim();                     // Clean up whitespace
+  }
+
   async callGeminiAPI(prompt, retryCount = 0) {
     const MAX_RETRIES = 3;
-    const RETRY_DELAY = 1000; // 1 second delay between retries
+    const RETRY_DELAY = 1000;
 
     try {
       const payload = {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 700
+          temperature: 0.1,
+          maxOutputTokens: 1000,
+          topK: 1,
+          topP: 0.8
         }
       };
 
-      console.debug('Calling Gemini API - prompt length:', prompt.length);
+      const response = await axios.post(this.baseUrl, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        params: { key: this.apiKey },
+        timeout: 60000
+      });
 
-        const response = await axios.post(this.baseUrl, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          params: { key: this.apiKey },
-          // Increase timeout to handle occasional slowness from the Gemini API
-          timeout: 60000
-        });
-
-      // Basic validation of response shape
-      if (!response.data || !response.data.candidates || !response.data.candidates[0]) {
-        console.error('Unexpected Gemini response shape:', response.data);
-        throw new Error('Invalid Gemini response');
+      if (!response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        console.error('Invalid Gemini response shape:', response.data);
+        return '';
       }
 
-      // Log a short preview of the raw response for debugging
+      const rawText = response.data.candidates[0].content.parts[0].text;
+      const cleanText = this.sanitizeMarkdown(rawText);
+
       if (process.env.NODE_ENV !== 'production') {
-        const preview = String(response.data.candidates[0].content?.parts?.[0]?.text || '').slice(0, 300);
-        console.debug('Gemini response preview:', preview);
+        console.debug('Sanitized response preview:', cleanText.slice(0, 100));
       }
 
-      return response.data.candidates[0].content.parts[0].text;
+      return cleanText;
     } catch (error) {
       // Handle specific error cases
       if (error.response) {
